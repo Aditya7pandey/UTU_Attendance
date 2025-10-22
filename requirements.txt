@@ -1,0 +1,12 @@
+streamlit
+opencv-python
+face-recognition
+pandas
+numpy
+qrcode[pil]
+requests
+reportlab
+pyzbar
+mediapipe
+scipy
+Pillow
