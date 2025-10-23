@@ -10,3 +10,4 @@ pyzbar
 mediapipe
 scipy
 Pillow
+supabase
