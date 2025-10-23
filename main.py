@@ -257,7 +257,7 @@ st.markdown("""
 
 # AI Insights Configuration
 
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "yak"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
