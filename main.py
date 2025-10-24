@@ -25,8 +25,11 @@ from email.mime.image import MIMEImage
 
 from supabase_client import supabase
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.lib.units import inch
 
 
 # Initialize session state variables
@@ -260,7 +263,7 @@ st.markdown("""
 
 # AI Insights Configuration
 
-GROQ_API_KEY = "api"
+GROQ_API_KEY = "YOUR_API_KEY"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
@@ -337,40 +340,74 @@ def generate_simple_qr(name):
     qr_img.save(qr_path)
     return qr_path
 
-# Function to scan QR code for attendance
+# Function to scan QR code with validation
 def scan_qr_code():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         st.error("Failed to access camera.")
         return None
     
-    st.write("📱 Scanning QR Code... Hold QR code in front of camera")
+    st.write("⛶ Scanning QR Code... Hold QR code in front of the camera")
     image_placeholder = st.empty()
     
     if "stop_qr_scanner" not in st.session_state:
-        st.session_state.stop_qr_scanner = False
+        st.session_state.stop_qr_scanner = False  # Initialize the stop flag if not already set
     
     stop_button = st.button("Stop QR Scanner", key="stop_qr_scanner_button")
+    
+    scan_line_position = 0  # Initial position of the scanning line
+    scan_direction = 1  # Direction of the scanning line (1 for down, -1 for up)
+    
+    # Fetch registered student names from Supabase
+    try:
+        response_students = supabase.table("students_data").select("Name").execute()
+        registered_students = [student["Name"].upper() for student in response_students.data]
+    except Exception as e:
+        st.error(f"Error fetching registered students: {e}")
+        return None
     
     while not st.session_state.stop_qr_scanner:
         success, frame = cap.read()
         if not success:
             break
         
+        frame_height, frame_width, _ = frame.shape
+        
+        # Add scanning effect (a moving horizontal line)
+        scan_line_position += scan_direction * 5  # Move the line by 5 pixels per frame
+        if scan_line_position >= frame_height or scan_line_position <= 0:
+            scan_direction *= -1  # Reverse direction when the line reaches the top or bottom
+        
+        # Draw the scanning line
+        line_color = (0, 255, 0)  # Green color
+        line_thickness = 2
+        cv2.line(frame, (0, scan_line_position), (frame_width, scan_line_position), line_color, line_thickness)
+        
+        # Convert the frame to RGB for Streamlit
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image_placeholder.image(frame_rgb, channels="RGB")
         
+        # Decode QR codes in the frame
         decoded_objects = decode(frame)
         for obj in decoded_objects:
             qr_data = obj.data.decode("utf-8")
             # Extract name from QR data
             if "Name: " in qr_data:
-                student_name = qr_data.split("Name: ")[1].split("\n")[0]
+                student_name = qr_data.split("Name: ")[1].split("\n")[0].strip().upper()
+                if student_name in registered_students:
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    return student_name
+                else:
+                    st.error("❌ QR not matched. This QR code is not registered.")
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    return None
             else:
-                student_name = qr_data
-            cap.release()
-            cv2.destroyAllWindows()
-            return student_name
+                st.error("❌ Invalid QR format.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return None
         
         if stop_button:
             st.session_state.stop_qr_scanner = True
@@ -378,7 +415,6 @@ def scan_qr_code():
     cap.release()
     cv2.destroyAllWindows()
     return None
-
 
 # Cached Function: Load Known Faces
 
@@ -748,63 +784,109 @@ def eye_aspect_ratio(eye):
 # Function: Generate Attendance Report (Enhanced)
 # -------------------------
 def generate_attendance_report():
-    response = supabase.table("Attendance").select("*").execute()
-    attendance_data = response.data
-    if not attendance_data:
-        st.warning("⚠️ No attendance records found.")
-        return
-    df = pd.DataFrame(attendance_data)
+    try:
+        # Fetch attendance data from Supabase
+        response_attendance = supabase.table("Attendance").select("*").execute()
+        attendance_data = response_attendance.data
+        if not attendance_data:
+            st.warning("⚠️ No attendance records found.")
+            return
+        attendance_df = pd.DataFrame(attendance_data)
 
-    if df.empty:
-        st.warning("⚠️ No attendance records found.")
-        return
+        # Fetch student data from Supabase
+        response_students = supabase.table("students_data").select("*").execute()
+        students_data = response_students.data
+        if not students_data:
+            st.warning("⚠️ No student data found.")
+            return
+        students_df = pd.DataFrame(students_data)
 
-    unique_dates = df["Date"].unique()
-    for date in unique_dates:
-        date_df = df[df["Date"] == date]
-        filename = f"Attendance_Report_{date}.pdf"
+        # Filter today's attendance
+        today_date = datetime.now().strftime('%Y-%m-%d')
+        today_attendance = attendance_df[attendance_df["Date"] == today_date]
 
         # Create a PDF document
+        filename = f"Attendance_Report_{today_date}.pdf"
         doc = SimpleDocTemplate(filename, pagesize=letter)
         elements = []
         styles = getSampleStyleSheet()
 
         # Add a title
         title = Paragraph(f"<b>Attendance Report</b>", styles["Title"])
-        subtitle = Paragraph(f"<b>Date:</b> {date}", styles["Heading2"])
+        subtitle = Paragraph(f"<b>Date:</b> {today_date}", styles["Heading2"])
         elements.append(title)
         elements.append(subtitle)
         elements.append(Spacer(1, 12))
 
-        # Create a table with attendance data
+        # Section 1: Today's Attendance Table
+        elements.append(Paragraph("<b>Today's Attendance</b>", styles["Heading3"]))
         data = [["Name", "Time", "Method"]]
-        for _, row in date_df.iterrows():
+        for _, row in today_attendance.iterrows():
             data.append([row["Name"], row["Time"], row["Method"]])
 
         table = Table(data, colWidths=[200, 150, 150])
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F81BD")),  # Header background color
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),  # Header text color
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F81BD")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, 0), 12),
             ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
-            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#D9E1F2")),  # Row background color
+            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#D9E1F2")),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
         ]))
         elements.append(table)
-
-        # Add footer
-        footer = Paragraph(
-            "<font size=10 color=gray>Generated by FaceMark Pro - Attendance Management System</font>",
-            styles["Normal"]
-        )
         elements.append(Spacer(1, 24))
-        elements.append(footer)
+
+        # Section 2: Overall Attendance Graph
+        elements.append(Paragraph("<b>Overall Attendance Comparison</b>", styles["Heading3"]))
+        attendance_summary = calculate_attendance_percentage()
+        if attendance_summary is not None:
+            plt.figure(figsize=(8, 4))
+            plt.barh(attendance_summary["Name"], attendance_summary["Percentage"], color="skyblue")
+            plt.xlabel("Attendance Percentage")
+            plt.ylabel("Student Name")
+            plt.title("Overall Attendance Comparison")
+            plt.tight_layout()
+            graph_path = "attendance_graph.png"
+            plt.savefig(graph_path)
+            plt.close()
+            elements.append(Image(graph_path, width=400, height=200))
+            elements.append(Spacer(1, 24))
+
+        # Section 3: Student Data with Images
+        elements.append(Paragraph("<b>Student Details</b>", styles["Heading3"]))
+        for _, student in students_df.iterrows():
+            student_name = student["Name"]
+            student_grade = student.get("Grade", "N/A")
+            student_age = student.get("Age", "N/A")
+            student_image_path = None
+
+            # Find student image
+            for ext in [".jpg", ".png", ".jpeg", ".bmp"]:
+                path = os.path.join(TRAINING_IMAGES_DIR, f"{student_name}{ext}")
+                if os.path.exists(path):
+                    student_image_path = path
+                    break
+
+            # Add student details
+            student_details = Paragraph(
+                f"<b>Name:</b> {student_name}<br/><b>Grade:</b> {student_grade}<br/><b>Age:</b> {student_age}",
+                styles["Normal"]
+            )
+            elements.append(student_details)
+
+            # Add student image if available
+            if student_image_path:
+                elements.append(Image(student_image_path, width=100, height=100))
+            elements.append(Spacer(1, 12))
 
         # Build the PDF
         doc.build(elements)
-        st.success(f"✅ Attendance Report Generated for {date}: {filename}")
+        st.success(f"✅ Attendance Report Generated: {filename}")
+
+    except Exception as e:
+        st.error(f"❌ Error generating attendance report: {e}")
 
 # Function: Chatbot Response
 def chatbot_response(user_query):
@@ -871,7 +953,7 @@ st.markdown("""
 <div class="main-header">
     <h1>FaceMark Pro</h1>
     <h3>Advanced Attendance & Absence Management System</h3>
-    <p>Facial Recognition • QR Code Scanning • Real-time Analytics</p>
+    <p>Facial Recognition • QR Code Scanning • Real-time Analytics • <b>Anti-Spoof Detection </b></p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -879,20 +961,22 @@ st.markdown("""
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    total_records = 0
+    unique_class_days = 0
     if supabase is None:
-        st.error("Supabase client is not initialized for Total Records metric.")
+        st.error("Supabase client is not initialized for Total Days metric.")
     else:
         try:
-            # Fetch the total count of attendance records
-            response_attendance = supabase.table("Attendance").select("*").execute()
-            total_records = len(response_attendance.data) if response_attendance.data else 0  # Fix: Use len() to count records
+            # Fetch attendance data to calculate unique class days
+            response_attendance = supabase.table("Attendance").select("Date").execute()
+            if response_attendance.data:
+                attendance_df = pd.DataFrame(response_attendance.data)
+                unique_class_days = attendance_df['Date'].nunique()
         except Exception as e:
-            st.error(f"Supabase Error (Total Records metric): {e}")
+            st.error(f"Supabase Error (Total Days metric): {e}")
     st.markdown(f"""
     <div class="metric-card">
-        <h3>📊 {total_records}</h3>
-        <p>Total Records</p>
+        <h3>☀️  {unique_class_days}</h3>
+        <p><b>Total Days</b></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -908,8 +992,8 @@ with col2:
             st.error(f"Supabase Error (Today's Attendance metric): {e}")
     st.markdown(f"""
     <div class="metric-card">
-        <h3>📅 {today_records}</h3>
-        <p>Today's Attendance</p>
+        <h3>{today_records}</h3>
+        <p><b>Today's Attendance</b></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -926,8 +1010,8 @@ with col3:
             st.error(f"Supabase Error (Registered Students metric): {e}")
     st.markdown(f"""
     <div class="metric-card">
-        <h3>👥 {registered_faces}</h3>
-        <p>Registered Students</p>
+        <h3>✅ {registered_faces}</h3>
+        <p><b>Registered Students</b></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -936,39 +1020,39 @@ with col4:
     gold_badges = len(response_rewards.data) if response_rewards.data else 0
     st.markdown(f"""
     <div class="metric-card">
-        <h3>🔒 {gold_badges}</h3>
-        <p>Anti-Spoof Active</p>
+        <h3>🏆 {gold_badges}</h3>
+        <p><b>Gold Badgers(Anti-Spoof Active)</b></p>
     </div>
     """, unsafe_allow_html=True)
 
 # Enhanced Sidebar with Better Styling
 st.sidebar.markdown("""
 <div style="background: linear-gradient(180deg, #667eea 0%, #764ba2 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-    <h2 style="color: white; text-align: center;">🎛️ Control Panel</h2>
+    <h2 style="color: white; text-align: center;">⚙️ Control Panel</h2>
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 📋 Reports & Analytics")
-if st.sidebar.button("📊 Download Attendance Report", key="download_report"):
+st.sidebar.markdown("### 📊 Reports & Analytics")
+if st.sidebar.button(" Download Attendance Report", key="download_report"):
     generate_attendance_report()
 
-if st.sidebar.button("⚠️ Send Low Attendance Notice", key="check_attendance"):
+if st.sidebar.button("Send Low Attendance Notice", key="check_attendance"):
     check_and_notify_low_attendance()
 
-if st.sidebar.button("🤖 AI Attendance Insights", key="ai_insights"):
+if st.sidebar.button(" AI Attendance Insights", key="ai_insights"):
     st.markdown("""
     <div class="info-card">
-        <h3>🤖 AI-Powered Attendance Analysis</h3>
+        <h3>AI-Powered Attendance Analysis</h3>
         <p>Generating intelligent insights from your attendance data...</p>
     </div>
     """, unsafe_allow_html=True)
     
-    with st.spinner("🧠 AI is analyzing attendance patterns..."):
+    with st.spinner("Face-Pro AI is analyzing attendance patterns..."):
         insights = generate_ai_insights()
     
     st.markdown(f"""
     <div class="success-card">
-        <h4>📊 AI Insights & Recommendations</h4>
+        <h4>AI Insights & Recommendations</h4>
         <p>{insights}</p>
     </div>
     """, unsafe_allow_html=True)
@@ -994,14 +1078,14 @@ if st.sidebar.button("🤖 AI Attendance Insights", key="ai_insights"):
     else:
         st.info("No graph generated due to insufficient data or selection.")
 
-st.sidebar.markdown("### 📹 Camera Controls")
-if st.sidebar.button("🎥 Start Webcam", key="start_webcam"):
+st.sidebar.markdown("### 📸 Camera Controls")
+if st.sidebar.button("Start Webcam", key="start_webcam"):
     st.session_state["webcam_active"] = True
-if st.sidebar.button("⏹️ Stop Webcam", key="stop_webcam"):
+if st.sidebar.button("Stop Webcam", key="stop_webcam"):
     st.session_state["webcam_active"] = False
 
-st.sidebar.markdown("### 👤 Registration")
-if st.sidebar.button("📸 Register New Face", key="register_face"):
+st.sidebar.markdown("### ✅ Registration")
+if st.sidebar.button("Register New Face", key="register_face"):
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         st.error("⚠️ Unable to access the webcam.")
@@ -1023,11 +1107,11 @@ if st.sidebar.button("📸 Register New Face", key="register_face"):
             </div>
             """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 📱 QR Code Scanner")
-if st.sidebar.button("📱 Scan QR for Attendance", key="scan_qr"):
+st.sidebar.markdown("### ⛶ QR Code Scanner")
+if st.sidebar.button("Scan QR for Attendance", key="scan_qr"):
     st.markdown("""
     <div class="info-card">
-        <h4>📱 QR Code Attendance Scanner</h4>
+        <h4>QR Code Attendance Scanner</h4>
         <p>Hold your QR code in front of the camera</p>
     </div>
     """, unsafe_allow_html=True)
@@ -1054,17 +1138,17 @@ if st.sidebar.button("📱 Scan QR for Attendance", key="scan_qr"):
         st.error("❌ No valid QR code detected.")
 
 st.sidebar.markdown("### 📊 View Data")
-if st.sidebar.button("📋 Show Attendance Records", key="show_attendance"):
+if st.sidebar.button(" Show Attendance Records", key="show_attendance"):
     response = supabase.table("Attendance").select("*").execute()
     attendance_data = response.data
     if attendance_data:
         df = pd.DataFrame(attendance_data)
-        st.markdown("### 📋 Attendance Records")
+        st.markdown("### Overall Attendance Records")
         st.dataframe(df, use_container_width=True)
     else:
         st.warning("No attendance records found.")
 
-if st.sidebar.button("📈 Show Attendance Percentage", key="show_percentage"):
+if st.sidebar.button(" Show Attendance Percentage", key="show_percentage"):
     attendance_summary = calculate_attendance_percentage()
     if attendance_summary is not None and not attendance_summary.empty:
         st.markdown("### 📊 Student Attendance Analysis")
@@ -1094,19 +1178,19 @@ if st.sidebar.button("📈 Show Attendance Percentage", key="show_percentage"):
                 """, unsafe_allow_html=True)
         
         # Display summary table
-        st.markdown("#### 📋 Complete Summary")
+        st.markdown("####  Complete Summary")
         st.dataframe(attendance_summary, use_container_width=True)
 
 # Sidebar Chatbot Toggle
-st.sidebar.markdown("### 🤖 Chatbot")
-if st.sidebar.button("💬 Toggle Chatbot", key="toggle_chatbot"):
+st.sidebar.markdown("### 👽 Chatbot")
+if st.sidebar.button("Toggle Chatbot", key="toggle_chatbot"):
     st.session_state.chatbot_visible = not st.session_state.chatbot_visible
 
 # Chatbot UI
 if st.session_state.chatbot_visible:
     st.markdown("""
     <div class="info-card">
-        <h3>🤖 AI Chatbot</h3>
+        <h3>FaceMark Pro</h3>
         <p>Ask me anything about student attendance or project insights!</p>
     </div>
     """, unsafe_allow_html=True)
@@ -1234,7 +1318,7 @@ if "captured_image" in st.session_state:
                         """, unsafe_allow_html=True)
                     
                     # Update the UI dynamically after registration
-                    st.experimental_rerun()  # Refresh the app to reflect the new count
+                    st.rerun()  # Refresh the app to reflect the new count
 
                     del st.session_state["captured_image"]
                     st.balloons()
@@ -1255,8 +1339,8 @@ if st.button("✅ Register Student", key="register_student"):
 if st.session_state.get("webcam_active"):
     st.markdown("""
     <div class="info-card">
-        <h3>🎥 Live Face Recognition with Anti-Spoof Detection</h3>
-        <p>Position yourself in front of the camera and blink naturally for verification</p>
+        <h3> Live Face Recognition with Anti-Spoof Detection</h3>
+        <p>Position yourself in front of the camera and <b>blink naturally for verification</b></p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1442,8 +1526,8 @@ if st.session_state.get("webcam_active"):
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; padding: 2rem; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white; margin-top: 2rem;">
-    <h4>🎓 FaceMark Pro - Attendance Management System</h4>
-    <p>🔒 Anti-Spoof Protection • Powered by AI • Built with ❤️ for Educational Excellence</p>
-    <p><small>© 2024 Birla Institute of Applied Sciences</small></p>
+    <h4> FaceMark Pro - AI Attendance Management System</h4>
+    <p><b>Real-time Anti-Spoof Protection • Powered by AI • Automated Alerts</b></p>
+    <p><small>© 2025 Birla Institute of Applied Sciences</small></p>
 </div>
 """, unsafe_allow_html=True)
