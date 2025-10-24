@@ -2,6 +2,7 @@
 import pandas as pd
 from datetime import datetime
 import os
+import streamlit as st
 from supabase_client import supabase
 
 def mark_attendance_and_reward_enhanced(student_name, frame, send_email_func, update_rewards_func):

@@ -257,7 +257,7 @@ st.markdown("""
 
 # AI Insights Configuration
 
-GROQ_API_KEY = "yak"
+GROQ_API_KEY = "api"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
@@ -785,13 +785,20 @@ def chatbot_response(user_query):
             return "I couldn't find any student registration data. Would you like to register a new student?"
         students_df = pd.DataFrame(students_data)
         
+        # Include chat history in the prompt
+        chat_history = st.session_state.chat_history
+        formatted_history = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in chat_history])
+        
         # Prepare a concise prompt for the LLM
         prompt = f"""
         You are an AI assistant for a student attendance system. Respond concisely and directly to the user's query.
-        If appropriate, suggest follow-up questions or actions the user can take.
+        Retain the context of the conversation and use the chat history to provide relevant answers.
 
         Attendance Data: {attendance_df.to_dict(orient='records')}
         Student Data: {students_df.to_dict(orient='records')}
+
+        Chat History:
+        {formatted_history}
 
         User Query: {user_query}
 
