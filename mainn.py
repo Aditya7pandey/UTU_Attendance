@@ -31,6 +31,7 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.lib.units import inch
 
+import playsound  # Add this import for playing sound
 
 # Initialize session state variables
 if "chat_history" not in st.session_state:
@@ -263,7 +264,7 @@ st.markdown("""
 
 # AI Insights Configuration
 
-GROQ_API_KEY = "YOUR_API_KEY"
+GROQ_API_KEY = "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"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
@@ -1318,7 +1319,7 @@ if "captured_image" in st.session_state:
                         """, unsafe_allow_html=True)
                     
                     # Update the UI dynamically after registration
-                    st.experimental_rerun()  # Refresh the app to reflect the new count
+                    st.rerun()  # Refresh the app to reflect the new count
 
                     del st.session_state["captured_image"]
                     st.balloons()
@@ -1432,7 +1433,7 @@ if st.session_state.get("webcam_active"):
 
                 for encodeFace, faceLoc in zip(encodesCurFrame, face_locations):
                     matches = face_recognition.compare_faces(known_faces, encodeFace, TOLERANCE)
-                    faceDis = face_recognition.face_distance(known_faces)
+                    faceDis = face_recognition.face_distance(known_faces, encodeFace)
                     matchIndex = np.argmin(faceDis) if len(faceDis) > 0 else None
                     threshold = 0.5
 
@@ -1460,6 +1461,8 @@ if st.session_state.get("webcam_active"):
                                     cv2.FONT_HERSHEY_COMPLEX, 0.7, (255, 255, 255), 2)
                     else:
                         recognition_placeholder.markdown("❓ **Unknown Face**")
+                        # Play alert tune for unknown face
+                        playsound.playsound("alert-33762.mp3")
             else:
                 # Liveness not verified or expired, manage challenge states
                 if st.session_state.liveness_state == "IDLE" or st.session_state.liveness_state == "VERIFIED":
