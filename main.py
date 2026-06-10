@@ -17,6 +17,9 @@ from scipy.spatial import distance as dist
 import json
 import matplotlib.pyplot as plt
 import plotly.express as px
+import hashlib
+import secrets
+import socket
 
 import smtplib
 from email.mime.text import MIMEText
@@ -24,6 +27,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 
 from supabase_client import supabase
+from blockchain_attendance import BlockchainAttendance
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
@@ -31,26 +35,106 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.lib.units import inch
 
-
-# Initialize session state variables
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "chatbot_visible" not in st.session_state:
     st.session_state.chatbot_visible = False
 
+# Offline Storage Configuration
+OFFLINE_FILE = "offline_attendance.json"
 
-# Function: Generate AI Insights
+def check_internet():
+    """Check if internet connection is available"""
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        return True
+    except OSError:
+        return False
+
+def save_offline_attendance(name, date, time_str, method):
+    """Save attendance to local JSON file"""
+    record = {
+        "Name": name,
+        "Date": date,
+        "Time": time_str,
+        "Method": method,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    try:
+        if os.path.exists(OFFLINE_FILE):
+            with open(OFFLINE_FILE, 'r') as f:
+                data = json.load(f)
+        else:
+            data = []
+        
+        # Check for duplicates
+        exists = any(r["Name"] == name and r["Date"] == date for r in data)
+        if not exists:
+            data.append(record)
+            with open(OFFLINE_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            return True
+    except Exception as e:
+        st.error(f"Error saving offline: {e}")
+    return False
+
+def sync_offline_data():
+    """Sync offline data to Supabase"""
+    if not os.path.exists(OFFLINE_FILE):
+        return 0
+    
+    try:
+        with open(OFFLINE_FILE, 'r') as f:
+            offline_data = json.load(f)
+        
+        synced_count = 0
+        for record in offline_data[:]:
+            try:
+                # Check if already exists online
+                response = supabase.table("Attendance").select("*").eq("Name", record["Name"]).eq("Date", record["Date"]).execute()
+                if not response.data:
+                    # Insert to Supabase
+                    supabase.table("Attendance").insert({
+                        "Name": record["Name"],
+                        "Date": record["Date"],
+                        "Time": record["Time"],
+                        "Method": record["Method"]
+                    }).execute()
+                    synced_count += 1
+                
+                # Remove from offline file
+                offline_data.remove(record)
+            except Exception as e:
+                st.error(f"Sync error for {record['Name']}: {e}")
+        
+        # Update offline file
+        with open(OFFLINE_FILE, 'w') as f:
+            json.dump(offline_data, f, indent=2)
+        
+        return synced_count
+    except Exception as e:
+        st.error(f"Sync error: {e}")
+        return 0
+
+def get_offline_count():
+    """Get count of offline records"""
+    if not os.path.exists(OFFLINE_FILE):
+        return 0
+    try:
+        with open(OFFLINE_FILE, 'r') as f:
+            return len(json.load(f))
+    except:
+        return 0
 
 def generate_ai_insights():
     try:
-        # Fetch attendance data from Supabase
         response_attendance = supabase.table("Attendance").select("*").execute()
         attendance_data = response_attendance.data
         if not attendance_data:
             return "No attendance data available for analysis."
         attendance_df = pd.DataFrame(attendance_data)
         
-        # Fetch student data from Supabase
         response_students = supabase.table("students_data").select("*").execute()
         students_data = response_students.data
         if not students_data:
@@ -107,7 +191,6 @@ def generate_ai_insights():
 
 def plot_attendance_comparison(selected_students=None):
     try:
-        # Fetch attendance data from Supabase
         response_attendance = supabase.table("Attendance").select("*").execute()
         attendance_data = response_attendance.data
         if not attendance_data:
@@ -115,7 +198,6 @@ def plot_attendance_comparison(selected_students=None):
             return None
         attendance_df = pd.DataFrame(attendance_data)
         
-        # Fetch student data from Supabase
         response_students = supabase.table("students_data").select("*").execute()
         students_data = response_students.data
         if not students_data:
@@ -128,7 +210,8 @@ def plot_attendance_comparison(selected_students=None):
         plot_data = []
         for index, student in students_df.iterrows():
             student_name = student['Name']
-            if selected_students and student_name not in selected_students:
+            # If students are selected, only include those; if none selected, include all
+            if selected_students and len(selected_students) > 0 and student_name not in selected_students:
                 continue
 
             student_attendance_records = attendance_df[attendance_df['Name'].str.upper() == student_name.upper()]
@@ -153,7 +236,7 @@ def plot_attendance_comparison(selected_students=None):
                      color="Percentage",
                      color_continuous_scale=px.colors.sequential.Viridis)
         
-        fig.update_layout(yaxis={'categoryorder':'total ascending'}) # Sort bars by percentage
+        fig.update_layout(yaxis={'categoryorder':'total ascending'})
         fig.update_traces(marker_line_color='rgb(8,48,107)', marker_line_width=1.5)
         
         return fig
@@ -161,9 +244,6 @@ def plot_attendance_comparison(selected_students=None):
     except Exception as e:
         st.error(f"An unexpected error occurred during plot generation: {str(e)}")
         return None
-
-
-# Enhanced UI Configuration
 
 st.set_page_config(
     page_title="FaceMark Pro - Attendance System",
@@ -263,7 +343,7 @@ st.markdown("""
 
 # AI Insights Configuration
 
-GROQ_API_KEY = "YOUR_API_KEY"
+GROQ_API_KEY = "yak"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
@@ -281,6 +361,15 @@ TOLERANCE = 0.6                                     # Face recognition matching 
 MODEL = "hog"                                       # Use 'hog' for CPU and 'cnn' for GPU
 qr_folder = "QR_Codes"                              # Folder for QR codes
 
+# Initialize blockchain
+try:
+    blockchain = BlockchainAttendance()
+    BLOCKCHAIN_ENABLED = True
+    print("✅ Blockchain initialized successfully")
+except Exception as e:
+    BLOCKCHAIN_ENABLED = False
+    print(f"⚠️ Blockchain disabled: {e}")
+
 # Liveness Detection Constants
 EYE_AR_THRESH = 0.25
 EYE_AR_CONSEC_FRAMES = 2
@@ -293,7 +382,104 @@ os.makedirs(TRAINING_IMAGES_DIR, exist_ok=True)
 os.makedirs(qr_folder, exist_ok=True)
 
 
-# QR Code & Registration Functions
+# Dynamic QR Code System for Attendance Sessions
+def generate_session_qr(session_id, timestamp):
+    """Generate a time-based QR code for attendance session"""
+    qr_data = f"SESSION:{session_id}:TIME:{timestamp}"
+    qr = qrcode.QRCode(version=2, box_size=15, border=4)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    
+    # Convert PIL image to bytes for Streamlit
+    img = qr.make_image(fill="black", back_color="white")
+    import io
+    img_bytes = io.BytesIO()
+    img.save(img_bytes, format='PNG')
+    img_bytes.seek(0)
+    return img_bytes
+
+def validate_session_qr(qr_data, session_id):
+    """Validate if scanned QR belongs to current session and is within time window"""
+    try:
+        parts = qr_data.split(":")
+        if len(parts) >= 4 and parts[0] == "SESSION" and parts[1] == session_id:
+            qr_timestamp = int(parts[3])
+            current_time = int(time.time())
+            # Allow 8-second window for QR validity (5s refresh + 3s buffer)
+            return abs(current_time - qr_timestamp) <= 8
+    except:
+        pass
+    return False
+
+def scan_session_qr():
+    """Scan QR code during active session"""
+    if not st.session_state.get("session_active"):
+        st.error("❌ No active attendance session. Please ask your teacher to start a session.")
+        return None
+    
+    # Get student name first
+    student_name = st.text_input("Enter your registered name:", key="student_name_input")
+    
+    if not student_name:
+        st.info("👆 Please enter your name first, then scan the QR code")
+        return None
+    
+    # Validate student exists
+    response = supabase.table("students_data").select("name").execute()
+    registered_students = [student["name"].upper() for student in response.data]
+    
+    if student_name.upper() not in registered_students:
+        st.error("❌ Student not registered in system")
+        return None
+    
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        st.error("❌ Could not access camera")
+        return None
+    
+    st.write("📱 Scanning session QR code...")
+    image_placeholder = st.empty()
+    
+    if "stop_session_qr_scanner" not in st.session_state:
+        st.session_state.stop_session_qr_scanner = False
+    
+    stop_button = st.button("Stop Scanner", key="stop_session_qr_button")
+    
+    while not st.session_state.stop_session_qr_scanner:
+        success, frame = cap.read()
+        if not success:
+            break
+        
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image_placeholder.image(frame_rgb, channels="RGB")
+        
+        # Decode QR codes
+        decoded_objects = decode(frame)
+        for obj in decoded_objects:
+            qr_data = obj.data.decode("utf-8")
+            
+            # Validate session QR
+            if validate_session_qr(qr_data, st.session_state.session_id):
+                cap.release()
+                cv2.destroyAllWindows()
+                
+                # Automatically mark attendance
+                result, method = mark_attendance(student_name.upper(), "Session QR")
+                if result:
+                    st.success(f"✅ Attendance marked for {student_name}!")
+                    st.balloons()
+                else:
+                    st.error("❌ Attendance already marked today")
+                return "SUCCESS"
+            else:
+                st.error("❌ Invalid or expired QR code")
+        
+        if stop_button:
+            st.session_state.stop_session_qr_scanner = True
+    
+    cap.release()
+    cv2.destroyAllWindows()
+    return None
 
 def upload_to_imgur(image_path):
     CLIENT_ID = "865c3e5bfc8ef5d"  # Your Imgur client ID
@@ -503,77 +689,210 @@ def mark_attendance_and_reward(student_name, frame):
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
     
-    # Check if attendance for this student is already marked today in Supabase
-    try:
-        response = supabase.table("Attendance").select("*").eq("Name", student_name).eq("Date", dateString).execute()
-        if response.data:
-            existing_method = response.data[0].get("Method", "Unknown")
-            return None, None, None, existing_method
-    except Exception as e:
-        print(f"Error checking existing attendance in Supabase: {e}")
-        return None, None, None, "Error"
-
-    # If not marked, insert new attendance record into Supabase
-    try:
-        new_entry_data = {
-            "Name": student_name,
-            "Date": dateString,
-            "Time": timeString,
-            "Method": "Face Recognition"
-        }
-        supabase.table("Attendance").insert(new_entry_data).execute()
-    except Exception as e:
-        print(f"Error inserting new attendance record into Supabase: {e}")
-        return None, None, None, "Error"
+    is_online = check_internet()
     
-    reward_info = update_rewards(student_name)
-    send_email(student_name, frame, f"{dateString} {timeString}", reward_info['Badge'])
+    if is_online:
+        # Online mode - check Supabase first
+        try:
+            response = supabase.table("Attendance").select("*").eq("Name", student_name).eq("Date", dateString).execute()
+            if response.data:
+                existing_method = response.data[0].get("Method", "Unknown")
+                return None, None, None, existing_method
+        except Exception as e:
+            st.error(f"Error checking attendance: {e}")
+            is_online = False
+    
+    if not is_online:
+        # Offline mode - check local file
+        if os.path.exists(OFFLINE_FILE):
+            try:
+                with open(OFFLINE_FILE, 'r') as f:
+                    offline_data = json.load(f)
+                if any(r["Name"] == student_name and r["Date"] == dateString for r in offline_data):
+                    return None, None, None, "Offline Record"
+            except:
+                pass
+
+    # Mark attendance
+    if is_online:
+        try:
+            new_entry_data = {
+                "Name": student_name,
+                "Date": dateString,
+                "Time": timeString,
+                "Method": "Face Recognition"
+            }
+            supabase.table("Attendance").insert(new_entry_data).execute()
+            
+            # Store on blockchain if enabled
+            if BLOCKCHAIN_ENABLED:
+                try:
+                    blockchain_record = blockchain.store_attendance(student_name, True, 0.95)
+                    st.success(f"🔗 Blockchain: {blockchain_record['blockchain_hash'][:16]}...")
+                except Exception as e:
+                    st.warning(f"⚠️ Blockchain storage failed: {e}")
+                    
+        except Exception as e:
+            st.error(f"Error inserting attendance: {e}")
+            is_online = False
+    
+    if not is_online:
+        # Save offline
+        if save_offline_attendance(student_name, dateString, timeString, "Face Recognition"):
+            st.info("📱 Saved offline - will sync when online")
+            reward_info = {"Name": student_name, "AttendanceCount": 0, "Badge": "Offline"}
+            return dateString, timeString, reward_info, "Face Recognition"
+        else:
+            return None, None, None, "Error"
+    
+    reward_info = update_rewards(student_name) if is_online else {"Name": student_name, "AttendanceCount": 0, "Badge": "Offline"}
+    if is_online:
+        send_email(student_name, frame, f"{dateString} {timeString}", reward_info['Badge'])
     return dateString, timeString, reward_info, "Face Recognition"
 
 # Simple attendance marking for QR code scanning (ENHANCED)
-def mark_attendance(student_name):
+def mark_attendance(student_name, method="QR Code"):
     now = datetime.now()
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
     
-    # Check if attendance for this student is already marked today in Supabase
-    try:
-        response = supabase.table("Attendance").select("*").eq("Name", student_name).eq("Date", dateString).execute()
-        if response.data:
-            existing_method = response.data[0].get("Method", "Unknown")
-            return False, existing_method
-    except Exception as e:
-        print(f"Error checking existing attendance in Supabase: {e}")
-        return False, "Error"
+    is_online = check_internet()
+    
+    if is_online:
+        # Online mode - check Supabase
+        try:
+            response = supabase.table("Attendance").select("*").eq("Name", student_name).eq("Date", dateString).execute()
+            if response.data:
+                existing_method = response.data[0].get("Method", "Unknown")
+                return False, existing_method
+        except Exception as e:
+            st.error(f"Error checking attendance: {e}")
+            is_online = False
+    
+    if not is_online:
+        # Offline mode - check local file
+        if os.path.exists(OFFLINE_FILE):
+            try:
+                with open(OFFLINE_FILE, 'r') as f:
+                    offline_data = json.load(f)
+                if any(r["Name"] == student_name and r["Date"] == dateString for r in offline_data):
+                    return False, "Offline Record"
+            except:
+                pass
 
-    # If not marked, insert new attendance record into Supabase
-    try:
-        new_entry_data = {
-            "Name": student_name,
-            "Date": dateString,
-            "Time": timeString,
-            "Method": "QR Code"
-        }
-        supabase.table("Attendance").insert(new_entry_data).execute()
-    except Exception as e:
-        print(f"Error inserting new attendance record into Supabase: {e}")
+    # Mark attendance
+    if is_online:
+        try:
+            new_entry_data = {
+                "Name": student_name,
+                "Date": dateString,
+                "Time": timeString,
+                "Method": method
+            }
+            supabase.table("Attendance").insert(new_entry_data).execute()
+            
+            # Store on blockchain if enabled
+            if BLOCKCHAIN_ENABLED:
+                try:
+                    blockchain_record = blockchain.store_attendance(student_name, True)
+                    st.success(f"🔗 Blockchain: {blockchain_record['blockchain_hash'][:16]}...")
+                except Exception as e:
+                    st.warning(f"⚠️ Blockchain storage failed: {e}")
+            
+            # Update rewards
+            reward_response = supabase.table("rewards").select("*").eq("Name", student_name).execute()
+            
+            if reward_response.data:
+                # Update existing
+                current_count = reward_response.data[0]["AttendanceCount"]
+                new_count = current_count + 1
+                
+                if new_count >= 10:
+                    badge = "Gold"
+                elif new_count >= 5:
+                    badge = "Silver"
+                elif new_count >= 4:
+                    badge = "Bronze"
+                else:
+                    badge = "No Badge"
+                
+                supabase.table("rewards").update({
+                    "AttendanceCount": new_count,
+                    "Badge": badge
+                }).eq("Name", student_name).execute()
+            else:
+                # Create new
+                supabase.table("rewards").insert({
+                    "Name": student_name,
+                    "AttendanceCount": 1,
+                    "Badge": "No Badge"
+                }).execute()
+                
+        except Exception as e:
+            st.error(f"Error inserting attendance: {e}")
+            is_online = False
+    
+    if not is_online:
+        # Save offline
+        if save_offline_attendance(student_name, dateString, timeString, method):
+            st.info("📱 Saved offline - will sync when online")
+            return True, method
         return False, "Error"
     
-    update_rewards(student_name)
-    return True, "QR Code"
+    return True, method
 
 # -------------------------
 # Function: Send Email Notification with Image and Timestamp
 # -------------------------
 def send_email(student_name, captured_img, timestamp, badge):
-    subject = "Attendance Marked Notification"
-    body = f"Attendance for {student_name} has been marked at {timestamp}.\nCurrent Badge: {badge}"
+    subject = "✅ Attendance Marked - FaceMark Pro"
     
-    msg = MIMEMultipart()
-    msg["From"] = "GateAttend <{}>".format(SENDER_EMAIL)
+    # Modern HTML email template
+    html_body = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }}
+            .container {{ max-width: 600px; margin: 0 auto; background-color: white; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
+            .content {{ padding: 30px; }}
+            .badge {{ display: inline-block; padding: 8px 16px; border-radius: 20px; font-weight: bold; margin: 10px 0; }}
+            .badge-gold {{ background-color: #FFD700; color: #333; }}
+            .badge-silver {{ background-color: #C0C0C0; color: #333; }}
+            .badge-bronze {{ background-color: #CD7F32; color: white; }}
+            .info-box {{ background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 20px; margin: 20px 0; }}
+            .footer {{ background-color: #333; color: white; padding: 20px; text-align: center; font-size: 12px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🎓 FaceMark Pro</h1>
+                <h2>Attendance Confirmation</h2>
+            </div>
+            <div class="content">
+                <h3>✅ Attendance Successfully Marked</h3>
+                <div class="info-box">
+                    <p><strong>Student:</strong> {student_name}</p>
+                    <p><strong>Timestamp:</strong> {timestamp}</p>
+                    <p><strong>Current Badge:</strong> <span class="badge badge-{badge.lower()}">{badge}</span></p>
+                </div>
+                <p>This is an automated notification from the FaceMark Pro attendance system.</p>
+            </div>
+            <div class="footer">
+                <p>© 2024 FaceMark Pro - Advanced Attendance Management System</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    msg = MIMEMultipart("alternative")
+    msg["From"] = "FaceMark Pro <{}>".format(SENDER_EMAIL)
     msg["To"] = ADMIN_EMAIL
     msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
     
     retval, buffer = cv2.imencode('.jpg', captured_img)
     if retval:
@@ -589,7 +908,7 @@ def send_email(student_name, captured_img, timestamp, badge):
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.sendmail(SENDER_EMAIL, ADMIN_EMAIL, msg.as_string())
         server.quit()
-        st.success(f"✅ Email sent to Admin@BIAS for {student_name} at {timestamp}!")
+        st.success(f"✅ Email sent to Admin for {student_name} at {timestamp}!")
     except Exception as e:
         st.error(f"❌ Error sending email: {e}")
 
@@ -597,27 +916,77 @@ def send_email(student_name, captured_img, timestamp, badge):
 # Function: Send Parent Notifications
 # -------------------------
 def send_parent_notification(student_name, parent_email, notification_type, attendance_percentage=None):
-    subject = f"Low Attendance Alert - {student_name}"
-    body = f"""
-Dear Parent/Guardian,
-
-We would like to inform you that {student_name}'s attendance has dropped to {attendance_percentage}%, 
-which is below the required 75% threshold.
-
-Current attendance: {attendance_percentage}%
-Required minimum: 75%
-
-We encourage you to discuss the importance of regular attendance with your child.
-
-Best regards,
-Birla Institute of Applied Sciences
+    subject = f"⚠️ Attendance Alert - {student_name}"
+    
+    # Modern HTML email template for parents
+    html_body = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }}
+            .container {{ max-width: 600px; margin: 0 auto; background-color: white; }}
+            .header {{ background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 30px; text-align: center; }}
+            .content {{ padding: 30px; }}
+            .alert-box {{ background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0; }}
+            .stats {{ display: flex; justify-content: space-between; margin: 20px 0; }}
+            .stat {{ text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 8px; flex: 1; margin: 0 5px; }}
+            .current {{ color: #e74c3c; font-size: 24px; font-weight: bold; }}
+            .required {{ color: #27ae60; font-size: 24px; font-weight: bold; }}
+            .footer {{ background-color: #333; color: white; padding: 20px; text-align: center; font-size: 12px; }}
+            .action-needed {{ background-color: #e74c3c; color: white; padding: 15px; border-radius: 8px; text-align: center; margin: 20px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🎓 FaceMark Pro</h1>
+                <h2>Attendance Alert</h2>
+            </div>
+            <div class="content">
+                <div class="alert-box">
+                    <h3>⚠️ Low Attendance Notice</h3>
+                    <p>Dear Parent/Guardian,</p>
+                    <p>We would like to inform you that <strong>{student_name}'s</strong> attendance has dropped below the required threshold.</p>
+                </div>
+                
+                <div class="stats">
+                    <div class="stat">
+                        <div class="current">{attendance_percentage}%</div>
+                        <div>Current Attendance</div>
+                    </div>
+                    <div class="stat">
+                        <div class="required">75%</div>
+                        <div>Required Minimum</div>
+                    </div>
+                </div>
+                
+                <div class="action-needed">
+                    <strong>Action Required:</strong> Please discuss the importance of regular attendance with your child.
+                </div>
+                
+                <p>Regular attendance is crucial for academic success. We encourage you to work with us to improve your child's attendance record.</p>
+                
+                <p>If there are any concerns or circumstances affecting attendance, please contact us immediately.</p>
+                
+                <p>Best regards,<br>
+                <strong>Academic Administration</strong><br>
+                FaceMark Pro System</p>
+            </div>
+            <div class="footer">
+                <p>© 2024 FaceMark Pro - This is an automated notification</p>
+                <p>Please do not reply to this email</p>
+            </div>
+        </div>
+    </body>
+    </html>
     """
     
-    msg = MIMEMultipart()
-    msg["From"] = f"Attendance Alert <{SENDER_EMAIL}>"
+    msg = MIMEMultipart("alternative")
+    msg["From"] = f"FaceMark Pro Alert <{SENDER_EMAIL}>"
     msg["To"] = parent_email
     msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
     
     try:
         server = smtplib.SMTP("smtp.gmail.com", 587)
@@ -625,7 +994,7 @@ Birla Institute of Applied Sciences
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.sendmail(SENDER_EMAIL, parent_email, msg.as_string())
         server.quit()
-        st.success(f"✅ Email sent to {parent_email} for {student_name} ({attendance_percentage}% attendance)!")
+        st.success(f"✅ Alert email sent to {parent_email} for {student_name} ({attendance_percentage}% attendance)!")
     except Exception as e:
         st.error(f"❌ Error sending email to {parent_email}: {e}")
 
@@ -679,24 +1048,76 @@ def check_and_notify_low_attendance():
             st.write(f"• {defaulter['Name']} - {defaulter['Percentage']}% "
                      f"(Parent: {defaulter['Parent_Name']} - {defaulter['Parent_Email']})")
             try:
-                subject = f"Low Attendance Alert - {defaulter['Name']}"
-                body = f'''Dear Parent/Guardian,
-
-We would like to inform you that {defaulter['Name']}'s attendance has dropped to {defaulter['Percentage']}%, which is below the required 75% threshold.
-
-Current attendance: {defaulter['Percentage']}% 
-Required minimum: 75%
-
-We encourage you to discuss the importance of regular attendance with your child.
-
-Best regards,
-Birla Institute of Applied Sciences'''
+                subject = f"⚠️ Low Attendance Alert - {defaulter['Name']}"
                 
-                msg = MIMEMultipart()
-                msg["From"] = f"Attendance Alert <{SENDER_EMAIL}>"
+                # Modern HTML email template
+                html_body = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }}
+                        .container {{ max-width: 600px; margin: 0 auto; background-color: white; }}
+                        .header {{ background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 30px; text-align: center; }}
+                        .content {{ padding: 30px; }}
+                        .alert-box {{ background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0; }}
+                        .stats {{ display: flex; justify-content: space-between; margin: 20px 0; }}
+                        .stat {{ text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 8px; flex: 1; margin: 0 5px; }}
+                        .current {{ color: #e74c3c; font-size: 24px; font-weight: bold; }}
+                        .required {{ color: #27ae60; font-size: 24px; font-weight: bold; }}
+                        .footer {{ background-color: #333; color: white; padding: 20px; text-align: center; font-size: 12px; }}
+                        .urgent {{ background-color: #e74c3c; color: white; padding: 15px; border-radius: 8px; text-align: center; margin: 20px 0; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>🎓 FaceMark Pro</h1>
+                            <h2>Urgent: Low Attendance Alert</h2>
+                        </div>
+                        <div class="content">
+                            <div class="alert-box">
+                                <h3>⚠️ Attendance Below Required Threshold</h3>
+                                <p>Dear Parent/Guardian,</p>
+                                <p>We need to inform you that <strong>{defaulter['Name']}'s</strong> attendance has fallen below the required minimum.</p>
+                            </div>
+                            
+                            <div class="stats">
+                                <div class="stat">
+                                    <div class="current">{defaulter['Percentage']}%</div>
+                                    <div>Current Attendance</div>
+                                </div>
+                                <div class="stat">
+                                    <div class="required">75%</div>
+                                    <div>Required Minimum</div>
+                                </div>
+                            </div>
+                            
+                            <div class="urgent">
+                                <strong>Immediate Action Required:</strong> Please discuss regular attendance with your child.
+                            </div>
+                            
+                            <p>Regular attendance is essential for academic success. We strongly encourage you to work with us to improve your child's attendance record immediately.</p>
+                            
+                            <p>Please contact the administration if there are any circumstances affecting attendance.</p>
+                            
+                            <p>Best regards,<br>
+                            <strong>Academic Administration</strong><br>
+                            FaceMark Pro System</p>
+                        </div>
+                        <div class="footer">
+                            <p>© 2024 FaceMark Pro - Automated Low Attendance Alert</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+                
+                msg = MIMEMultipart("alternative")
+                msg["From"] = f"FaceMark Pro Alert <{SENDER_EMAIL}>"
                 msg["To"] = defaulter['Parent_Email']
                 msg["Subject"] = subject
-                msg.attach(MIMEText(body, "plain"))
+                msg.attach(MIMEText(html_body, "html"))
 
                 # Find and attach student image
                 image_path = None
@@ -957,22 +1378,46 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# Connection Status & Auto-Sync
+is_online = check_internet()
+offline_count = get_offline_count()
+
+col1, col2, col3 = st.columns([2, 1, 1])
+with col1:
+    if is_online:
+        st.success("🟢 Online Mode")
+        if offline_count > 0:
+            synced = sync_offline_data()
+            if synced > 0:
+                st.success(f"✅ Auto-synced {synced} offline records")
+    else:
+        st.error("🔴 Offline Mode")
+
+with col2:
+    if offline_count > 0:
+        st.warning(f"📱 {offline_count} offline records")
+
+with col3:
+    if st.button("🔄 Manual Sync", disabled=not is_online):
+        if offline_count > 0:
+            synced = sync_offline_data()
+            st.success(f"✅ Synced {synced} records")
+        else:
+            st.info("No offline data to sync")
+
 # Dashboard Metrics
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     unique_class_days = 0
-    if supabase is None:
-        st.error("Supabase client is not initialized for Total Days metric.")
-    else:
+    if is_online and supabase is not None:
         try:
-            # Fetch attendance data to calculate unique class days
             response_attendance = supabase.table("Attendance").select("Date").execute()
             if response_attendance.data:
                 attendance_df = pd.DataFrame(response_attendance.data)
                 unique_class_days = attendance_df['Date'].nunique()
-        except Exception as e:
-            st.error(f"Supabase Error (Total Days metric): {e}")
+        except:
+            unique_class_days = 0
     st.markdown(f"""
     <div class="metric-card">
         <h3>☀️  {unique_class_days}</h3>
@@ -982,14 +1427,12 @@ with col1:
 
 with col2:
     today_records = 0
-    if supabase is None:
-        st.error("Supabase client is not initialized for Today's Attendance metric.")
-    else:
+    if is_online and supabase is not None:
         try:
             response_attendance = supabase.table("Attendance").select("*").eq("Date", datetime.now().strftime('%Y-%m-%d')).execute()
             today_records = len(response_attendance.data) if response_attendance.data else 0
-        except Exception as e:
-            st.error(f"Supabase Error (Today's Attendance metric): {e}")
+        except:
+            today_records = 0
     st.markdown(f"""
     <div class="metric-card">
         <h3>{today_records}</h3>
@@ -999,15 +1442,12 @@ with col2:
 
 with col3:
     registered_faces = 0
-    if supabase is None:
-        st.error("Supabase client is not initialized for Registered Students metric.")
-    else:
+    if is_online and supabase is not None:
         try:
-            # Fetch all registered students
             response_students = supabase.table("students_data").select("*").execute()
-            registered_faces = len(response_students.data) if response_students.data else 0  # Fix: Use len() to count records
-        except Exception as e:
-            st.error(f"Supabase Error (Registered Students metric): {e}")
+            registered_faces = len(response_students.data) if response_students.data else 0
+        except:
+            registered_faces = 0
     st.markdown(f"""
     <div class="metric-card">
         <h3>✅ {registered_faces}</h3>
@@ -1016,12 +1456,21 @@ with col3:
     """, unsafe_allow_html=True)
 
 with col4:
-    response_rewards = supabase.table("rewards").select("*").eq("Badge", "Gold").execute()
-    gold_badges = len(response_rewards.data) if response_rewards.data else 0
+    if is_online:
+        try:
+            response_rewards = supabase.table("rewards").select("*").eq("Badge", "Gold").execute()
+            gold_badges = len(response_rewards.data) if response_rewards.data else 0
+        except:
+            gold_badges = 0
+    else:
+        gold_badges = 0
+    
+    blockchain_status = "🔗 Blockchain Active" if BLOCKCHAIN_ENABLED else "⚠️ Offline"
     st.markdown(f"""
     <div class="metric-card">
         <h3>🏆 {gold_badges}</h3>
-        <p><b>Gold Badgers(Anti-Spoof Active)</b></p>
+        <p><b>Gold Badgers</b></p>
+        <p><small>{blockchain_status}</small></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1059,10 +1508,14 @@ if st.sidebar.button(" AI Attendance Insights", key="ai_insights"):
 
     # Get all student names for multiselect
     all_student_names = []
-    response_students = supabase.table("students_data").select("Name").execute()
-    if response_students.data:
-        students_df = pd.DataFrame(response_students.data)
-        all_student_names = students_df['Name'].tolist()
+    if is_online:
+        try:
+            response_students = supabase.table("students_data").select("Name").execute()
+            if response_students.data:
+                students_df = pd.DataFrame(response_students.data)
+                all_student_names = students_df['Name'].tolist()
+        except:
+            all_student_names = []
 
     selected_students = st.multiselect(
         "Select students to compare in the graph (leave empty for all):",
@@ -1107,51 +1560,88 @@ if st.sidebar.button("Register New Face", key="register_face"):
             </div>
             """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### ⛶ QR Code Scanner")
-if st.sidebar.button("Scan QR for Attendance", key="scan_qr"):
+st.sidebar.markdown("### 🎯 Attendance Session")
+
+# Initialize session state
+if "session_active" not in st.session_state:
+    st.session_state.session_active = False
+if "session_id" not in st.session_state:
+    st.session_state.session_id = None
+
+# Session control buttons in sidebar
+if not st.session_state.session_active:
+    if st.sidebar.button("🚀 Start Session", key="start_session"):
+        st.session_state.session_active = True
+        st.session_state.session_id = secrets.token_hex(8)
+        st.rerun()
+else:
+    if st.sidebar.button("🛑 End Session", key="end_session"):
+        st.session_state.session_active = False
+        st.session_state.session_id = None
+        st.rerun()
+    
+    # Show session status in sidebar
+    st.sidebar.success("✅ Session Active")
+    st.sidebar.info(f"ID: {st.session_state.session_id[:8]}...")
+
+# Display QR in main area if session is active
+if st.session_state.session_active:
     st.markdown("""
     <div class="info-card">
-        <h4>QR Code Attendance Scanner</h4>
-        <p>Hold your QR code in front of the camera</p>
+        <h3>📺 Active Attendance Session</h3>
+        <p>QR Code for classroom projection</p>
     </div>
     """, unsafe_allow_html=True)
     
-    student_name = scan_qr_code()
-    if student_name:
-        result, method = mark_attendance(student_name)
-        if result:
-            st.markdown(f"""
-            <div class="success-card">
-                <h4>✅ Attendance Marked Successfully!</h4>
-                <p><strong>{student_name}</strong> marked via QR Code</p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.balloons()
-        else:
-            st.markdown(f"""
-            <div class="warning-card">
-                <h4>⚠️ Already Marked</h4>
-                <p><strong>{student_name}</strong> already marked with {method}</p>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.error("❌ No valid QR code detected.")
+    # Show session ID for students
+    st.info(f"**Session ID for students:** `{st.session_state.session_id}`")
+    
+    # Generate and display QR
+    current_timestamp = int(time.time())
+    qr_img = generate_session_qr(st.session_state.session_id, current_timestamp)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image(qr_img, width=400, caption="Session QR Code - Refreshes every 5 seconds")
+    
+    # Auto-refresh every 5 seconds
+    time.sleep(5)
+    st.rerun()
 
 st.sidebar.markdown("### 📊 View Data")
 if st.sidebar.button(" Show Attendance Records", key="show_attendance"):
-    response = supabase.table("Attendance").select("*").execute()
-    attendance_data = response.data
-    if attendance_data:
-        df = pd.DataFrame(attendance_data)
-        st.markdown("### Overall Attendance Records")
-        st.dataframe(df, use_container_width=True)
+    if is_online:
+        try:
+            response = supabase.table("Attendance").select("*").execute()
+            attendance_data = response.data
+            if attendance_data:
+                df = pd.DataFrame(attendance_data)
+                st.markdown("### Overall Attendance Records")
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.warning("No attendance records found.")
+        except Exception as e:
+            st.error(f"Error fetching attendance data: {e}")
     else:
-        st.warning("No attendance records found.")
+        st.warning("🔴 Offline Mode - Cannot fetch online records")
+        if os.path.exists(OFFLINE_FILE):
+            try:
+                with open(OFFLINE_FILE, 'r') as f:
+                    offline_data = json.load(f)
+                if offline_data:
+                    df = pd.DataFrame(offline_data)
+                    st.markdown("### 📱 Offline Attendance Records")
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("No offline records found.")
+            except:
+                st.error("Error reading offline records")
 
 if st.sidebar.button(" Show Attendance Percentage", key="show_percentage"):
-    attendance_summary = calculate_attendance_percentage()
-    if attendance_summary is not None and not attendance_summary.empty:
-        st.markdown("### 📊 Student Attendance Analysis")
+    if is_online:
+        attendance_summary = calculate_attendance_percentage()
+        if attendance_summary is not None and not attendance_summary.empty:
+            st.markdown("### 📊 Student Attendance Analysis")
         
         # Separate students by attendance percentage
         good_attendance = attendance_summary[attendance_summary["Percentage"] >= 75]
@@ -1180,6 +1670,8 @@ if st.sidebar.button(" Show Attendance Percentage", key="show_percentage"):
         # Display summary table
         st.markdown("####  Complete Summary")
         st.dataframe(attendance_summary, use_container_width=True)
+    else:
+        st.warning("🔴 Offline Mode - Attendance percentage requires online connection")
 
 # Sidebar Chatbot Toggle
 st.sidebar.markdown("### 👽 Chatbot")
@@ -1337,6 +1829,11 @@ if st.button("✅ Register Student", key="register_student"):
 # Enhanced Live Webcam Capture with Anti-Spoof Detection
 # -------------------------
 if st.session_state.get("webcam_active"):
+    # Check connection status
+    is_online = check_internet()
+    if not is_online:
+        st.warning("🔴 **OFFLINE MODE** - Attendance will be saved locally and synced when online")
+    
     st.markdown("""
     <div class="info-card">
         <h3> Live Face Recognition with Anti-Spoof Detection</h3>
@@ -1415,7 +1912,7 @@ if st.session_state.get("webcam_active"):
                     st.session_state.liveness_verified_until = 0
                     st.session_state.blink_counter = 0
                     liveness_placeholder.markdown("⚠️ **Unstable face detected. Resetting liveness.**")
-                    last_face_location = current_face_location # Update for next frame
+                    st.session_state.last_face_location = current_face_location # Update for next frame
                     FRAME_WINDOW.image(frame, channels="BGR", use_container_width=True)
                     time.sleep(0.03)
                     continue # Skip further processing for this frame
@@ -1441,7 +1938,7 @@ if st.session_state.get("webcam_active"):
                         recognition_placeholder.markdown(f"✅ **Verified: {current_name}**")
                         
                         result = mark_attendance_and_reward(current_name, frame)
-                        if result[0] is not None:
+                        if result[0] is not None or not check_internet():
                             st.session_state["last_recognized"] = current_name
                             st.session_state["last_marked_time"] = time.time()
                             liveness_placeholder.markdown("✅ **Attendance Marked!**")

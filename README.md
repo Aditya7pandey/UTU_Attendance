@@ -1,78 +1,254 @@
+# FaceMark Pro - Advanced Attendance Management System
+
+<div align="center">
+
+![Python](https://img.shields.io/badge/python-v3.8+-blue.svg)
+![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)
+![OpenCV](https://img.shields.io/badge/opencv-4.8+-green.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+**AI-Powered Attendance System with Anti-Spoof Detection**
+
+[Features](#features) • [Installation](#installation) • [Usage](#usage) • [API](#api) • [Contributing](#contributing)
+
+</div>
+
+## 🎯 Overview
+
+FaceMark Pro is a comprehensive attendance management system that combines facial recognition, QR code scanning, and blockchain technology to provide secure, accurate, and tamper-proof attendance tracking. Built with advanced anti-spoof detection and real-time analytics.
+
+##  Features
+
+### 🔐 Security & Authentication
+- **Anti-Spoof Detection**: Real-time liveness detection using blink analysis
+- **Blockchain Integration**: Attendance records are stored on a blockchain (Ganache) to ensure tamper-proof and immutable data storage
+- **Face Recognition**: Advanced facial recognition with 95%+ accuracy
+- **QR Code Verification**: Dynamic session-based QR codes
+
+###  Analytics & Reporting
+- **AI-Powered Insights**: Intelligent attendance pattern analysis
+- **Real-time Dashboard**: Live attendance metrics and statistics
+- **Automated Reports**: PDF generation with charts and analytics
+- **Parent Notifications**: Automated email alerts for low attendance
+
+###  Connectivity
+- **Offline Mode**: Works without internet connection
+- **Auto-Sync**: Automatic synchronization when online
+- **Cloud Storage**: Supabase integration for data persistence
+- **Email Integration**: SMTP notifications and alerts
+
+###  User Experience
+- **Modern UI**: Gradient-based responsive interface
+- **Interactive Chatbot**: AI assistant for attendance queries
+- **Multi-Modal Input**: Face, QR code, and manual entry options
+- **Real-time Feedback**: Live camera feed with status indicators
+
+##  Installation
+
+### Prerequisites
+- Python 3.8 or higher
+- Webcam/Camera access
+- Internet connection (for cloud features)
+
+### Quick Setup
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/yourusername/UTU_Attendance-main.git
+cd UTU_Attendance-main
+```
+
+2. **Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+3. **Configure environment**
+```bash
+# Create .env file with your credentials
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+GROQ_API_KEY=your_groq_api_key
+SENDER_EMAIL=your_gmail@gmail.com
+SENDER_PASSWORD=your_app_password
+```
+
+4. **Run the application**
+```bash
+streamlit run main.py
+```
+
+## 📋 Usage
+
+### 🎓 Student Registration
+
+1. **Capture Face Image**
+   - Click "Register New Face" in sidebar
+   - Position face in camera frame
+   - Wait for 4-second capture
+
+2. **Fill Registration Form**
+   - Student ID and personal details
+   - Parent/Guardian information
+   - Contact details for notifications
+
+3. **QR Code Generation**
+   - Automatic QR code creation
+   - Image upload to cloud storage
+   - Downloadable QR code for student
+
+### ✅ Attendance Marking
+
+#### Face Recognition Mode
+- **Live Detection**: Real-time face recognition
+- **Anti-Spoof**: Blink verification required
+- **Automatic Marking**: Instant attendance logging
+
+#### QR Code Mode
+- **Session-Based**: Teacher starts attendance session
+- **Dynamic QR**: Auto-refreshing QR codes every 5 seconds
+- **Student Scanning**: Students scan with their devices
+
+#### Manual Entry
+- **Backup Option**: Manual attendance entry
+- **Verification**: Cross-check with registered students
+
+### 📊 Analytics Dashboard
+
+#### Real-time Metrics
+- Total class days
+- Today's attendance count
+- Registered students
+- Gold badge holders
+
+#### Reports & Insights
+- **AI Analysis**: Intelligent attendance patterns
+- **Attendance Percentage**: Individual student tracking
+- **Low Attendance Alerts**: Automated parent notifications
+- **PDF Reports**: Comprehensive attendance reports
+
+## 🏗️ Architecture
+
+### Core Components
+
+```
+FaceMark Pro/
+├── main.py                 # Main Streamlit application
+├── supabase_client.py      # Database connection
+├── blockchain_attendance.py # Blockchain integration
+├── student_app.py          # Student-specific features
+├── offline_sync.py         # Offline functionality
+├── Training_Images/        # Face recognition dataset
+├── QR_Codes/              # Generated QR codes
+└── requirements.txt       # Dependencies
+```
+
+### Technology Stack
+
+- **Frontend**: Streamlit with custom CSS
+- **Computer Vision**: OpenCV, face_recognition, MediaPipe
+- **Database**: Supabase (PostgreSQL)
+- **Blockchain**: Custom implementation
+- **AI/ML**: Groq API for insights
+- **Email**: SMTP with HTML templates
+- **QR Codes**: qrcode, pyzbar libraries
+
+## 🔧 Configuration
+
+### Database Setup (Supabase)
+
+Create the following tables in your Supabase project:
+
+```sql
+-- Students table
+CREATE TABLE students_data (
+    id SERIAL PRIMARY KEY,
+    Student_ID VARCHAR(50) UNIQUE,
+    Name VARCHAR(100),
+    Age INTEGER,
+    Grade VARCHAR(50),
+    Parent_Name VARCHAR(100),
+    Parent_Contact VARCHAR(20),
+    Parent_Gmail VARCHAR(100)
+);
+
+-- Attendance table
+CREATE TABLE Attendance (
+    id SERIAL PRIMARY KEY,
+    Name VARCHAR(100),
+    Date DATE,
+    Time TIME,
+    Method VARCHAR(50),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Rewards table
+CREATE TABLE rewards (
+    id SERIAL PRIMARY KEY,
+    Name VARCHAR(100),
+    AttendanceCount INTEGER DEFAULT 0,
+    Badge VARCHAR(20) DEFAULT 'No Badge'
+);
+```
+
+### Email Configuration
+
+1. **Enable 2FA** on your Gmail account
+2. **Generate App Password** in Google Account settings
+3. **Update credentials** in the configuration section
 
 
-### **FaceMark Pro: Comprehensive Attendance & Absence Management System**  
-**FaceMark Pro** is an advanced attendance marking system that combines facial recognition, QR code scanning, and automated absence notifications to create a seamless, efficient, and highly interactive attendance and absence management system. It is ideal for educational institutions and corporate settings, ensuring accurate attendance tracking, prompt absenteeism notifications, and real-time data analytics.
+
+
+
+
+
+
+
+
+
+
+## 🤝 Contributing
+
+We welcome contributions! Please follow these steps:
+
+1. **Fork the repository**
+2. **Create feature branch** (`git checkout -b feature/AmazingFeature`)
+3. **Commit changes** (`git commit -m 'Add AmazingFeature'`)
+4. **Push to branch** (`git push origin feature/AmazingFeature`)
+5. **Open Pull Request**
+
+
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **OpenCV** for computer vision capabilities
+- **Streamlit** for the web framework
+- **Supabase** for backend services
+- **face_recognition** library by Adam Geitgey
+- **MediaPipe** for facial landmark detection
+
+## 📞 Support
+
+For support and questions:
+
+- **Email**: adityasuyal0001@gmail.com
+- **Institution**: Birla Institute of Applied Sciences
+
 
 ---
 
-### 🚀 **Key Features & Functionalities**
+<div align="center">
 
-#### 📸 **Facial Recognition & QR Code Attendance**  
-- **Face Registration**: The system captures and registers the faces of students or employees, associating them with unique IDs. Each registered user receives a personalized QR code for attendance purposes.
-- **Facial Recognition for Attendance**: Upon entering the premises or at scheduled times, the system uses webcam-based facial recognition to automatically mark attendance for registered faces.
-- **QR Code Scanning**: Users can scan their unique QR codes using their smartphones or on-site scanners for an alternate method of marking attendance, ensuring flexibility.
 
-#### ⏰ **Attendance Tracking and Analytics**  
-- **Automated Attendance Logging**: The system keeps detailed records of attendance with timestamps and stores them in a secure database, ensuring precise tracking.
-- **Interactive Dashboard**: The dashboard, built using **Streamlit**, allows administrators and teachers to see real-time attendance data, monitor trends, and track absent students easily.
-- **Rewards System**: Based on attendance frequency, students/employees can earn badges such as Gold, Silver, and Bronze to encourage regular participation and engagement.
-- **Defaulter Detection**: The system automatically flags students or employees with low attendance rates, helping administrators take proactive measures.
-- **Data Visualization**: **Plotly** visualizes attendance trends, allowing administrators to view and analyze absenteeism patterns using interactive bar charts and graphs.
 
-#### 📩 **Automated Absence Notification System**  
-- **SMS Notifications to Parents/Guardians**: When a student is marked absent, the system immediately triggers an **SMS notification** to their registered parent or guardian, ensuring quick communication. This is powered by the **Twilio API** for real-time messaging.
-- **Customizable Message Templates**: The system comes with predefined templates for various absence categories such as:
-  - **General Absence**: Standard notification for a student’s absence.
-  - **Medical Leave**: Sends a health-related absence message.
-  - **Disciplinary Leave**: Alerts parents if the student’s absence is due to disciplinary issues.
-  - **Holiday Notices**: Notifies when school is closed for holidays.
-- **Manual Message Customization**: Administrators can modify or personalize the absence notifications before sending them to parents, giving them flexibility in communication.
 
-#### 📊 **Absence & Attendance Reports**  
-- **Monthly Absence Reports**: The system generates comprehensive attendance and absence reports in **CSV format**, providing a detailed analysis of the student or employee's attendance for any given period.
-- **Custom Report Generation**: Users can request customized reports tailored to specific attendance criteria or timeframes, such as for particular individuals or groups.
-- **Real-Time Absence Tracking**: The system logs all absences instantly, allowing administrators to view trends and monitor patterns in real time.
 
-#### 📥 **Automated Email Notifications**  
-- **Admin Notifications**: The system can send detailed attendance reports directly to administrators via **SMTP Email Notifications**, providing them with real-time data on attendance status, absentee trends, and necessary actions.
-- **Attendance with Images**: Admins receive emails containing attendance details along with an image of the recognized student or employee, ensuring full transparency in the marking process.
+</div>
 
-#### 🛠 **Webcam Support & Real-Time Recognition**  
-- **Webcam-Based Recognition**: **OpenCV** and the **Face Recognition API** power real-time face recognition via webcam, marking attendance as users enter or are present in front of the camera.
-- **Real-Time Updates**: As soon as a face is recognized or a QR code is scanned, attendance is logged immediately, ensuring a smooth and quick process.
 
-#### 📈 **Data-Driven Insights for Better Attendance Management**  
-- **Absenteeism Analysis**: The system generates insightful data visualizations, helping administrators easily identify absenteeism trends and act accordingly.
-- **Interactive Dashboards**: Using **Plotly**, administrators can see bar charts or heatmaps of absence data, helping them spot patterns of frequent absenteeism.
-- **Low Attendance Alerts**: The system flags students or employees with attendance lower than a certain threshold (e.g., <75%), highlighting them for follow-up.
-
----
-
-### 🛠 **Technologies Used**  
-- **Streamlit**: For building a smooth, interactive web-based UI to manage and view attendance data.  
-- **OpenCV & Face Recognition API**: For accurate facial recognition and identification.  
-- **Twilio API**: For sending real-time SMS notifications to parents/guardians about student absences.  
-- **Pandas**: For efficient data handling and processing of attendance records.  
-- **Plotly**: For generating dynamic, interactive data visualizations and attendance charts.  
-- **SMTP Email**: For sending detailed attendance reports and absence notifications to admins.
-
----
-
-### 🎯 **Why This Matters**  
-- **Efficient Communication**: Instant communication of absences to parents and administrators ensures that absenteeism is managed promptly and transparently.
-- **Increased Attendance**: With rewards and real-time tracking, the system incentivizes students/employees to maintain a higher level of attendance.
-- **Reduces Administrative Overhead**: Automating the attendance marking and absence notification process saves significant time for teachers and HR staff, allowing them to focus on more valuable tasks.
-- **Improves School/Institution Efficiency**: Data-driven insights from the dashboard help institutions to better manage and optimize attendance policies.
-
----
-
-### 🔮 **Future Enhancements**  
-- **AI-Powered Predictive Analytics**: Future iterations could use machine learning models to predict which students or employees are at risk of chronic absenteeism based on past behavior.  
-- **Cloud Integration**: Centralized cloud storage would allow multiple institutions to manage attendance data from different locations while ensuring data security and accessibility.  
-- **Multi-School/Institution Support**: Extend the platform to support the management of attendance data for multiple schools or companies on a single platform.
-- **Email Notifications**: Adding email notifications in addition to SMS ensures that parents and administrators receive updates through multiple channels.  
-
----
-
-**FaceMark Pro** is revolutionizing the way attendance and absences are tracked and managed by combining the power of facial recognition, QR codes, and automated communication. This system not only improves efficiency but also enhances transparency and communication between institutions and parents/guardians.
 
